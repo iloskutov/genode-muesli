@@ -1,0 +1,34 @@
+adb on the USB gadget driver
+
+The component 'usb_adb' is an adb function of the driver 'exynos_usb_gadget' of
+'repos/pixel'. It is a client of a Usb_gadget session with the label "adb", so the
+driver's config needs a 'function' with this label. The PC's unmodified adb talks to
+it, the engine of the protocol is in 'src/lib/adb_engine'.
+
+:'adb logcat': reads the Terminal session "logcat", usually of 'log_ring'. With '-d' it
+  ends after the history.
+:'adb push', 'adb pull': see the <vfs> node of the config.
+:'adb shell': starts a child per stream, from the <shell> node of the config, which
+  is the template of the shells. Without this node a shell is refused.
+
+Config, with an example of the values:
+
+! config | name: panther | model: Pixel 7 | device: panther
+!   + vfs | + fs
+
+The attributes are what 'adb devices -l' shows. The serial number comes from the
+config of the driver.
+
+The PC's adb 35 needs its native USB back end, the libusb one does not report this
+device:
+
+! adb kill-server
+! export ADB_LIBUSB=0
+! adb logcat
+
+The protocol has host tests:
+
+! make -C repos/muesli/src/lib/adb_engine/test
+
+The scenario 'run/usb_adb_pixel' tests the component on the phone with the tool
+'tool/usb_adb_check' on the PC.

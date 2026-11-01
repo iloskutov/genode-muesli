@@ -1,0 +1,65 @@
+#!/bin/bash
+#
+# \brief  PC side of the adb test run/usb_adb_pixel
+# \author Ivan Loskutov
+# \date   2026-10-24
+#
+# SPDX-License-Identifier: MIT
+#
+# Waits until the PC's adb lists the phone, then checks its state and logcat:
+# 'adb logcat -d' must hold the gadget driver's "configured" line and end by itself,
+# a plain 'adb logcat' must print lines within 5 s. A 4 MiB random file must come back
+# unchanged from 'adb push' and 'adb pull'. Exit status 0 if every check passed.
+#
+#   repos/muesli/tool/usb_adb_check [serial] [timeout_seconds]
+#
+
+SERIAL="${1:-G-genode}"
+TIMEOUT="${2:-150}"
+
+fail() { echo "FAIL $*"; exit 1; }
+
+# adb 35's libusb back end does not report this device, the native one does
+export ADB_LIBUSB=0
+adb kill-server > /dev/null 2>&1
+
+# the PC's adb server loses a device on the same port after this one went away, the
+# next adb call starts a fresh server that finds it again
+trap 'adb kill-server > /dev/null 2>&1' EXIT
+
+for ((i = 0; i < TIMEOUT; i++)); do
+	line=$(adb devices 2> /dev/null | grep "^${SERIAL}"$'\t')
+	[ -n "$line" ] && break
+	sleep 1
+done
+
+[ -n "$line" ] || fail "adb devices: ${SERIAL} not listed after ${TIMEOUT} s"
+
+[[ "$line" == *$'\tdevice' ]] || fail "adb devices: state of '${line}'"
+echo "PASS adb devices"
+
+dump=$(timeout 20 adb -s "$SERIAL" logcat -d 2>&1)
+[ $? -ne 124 ] || fail "adb logcat -d: did not end by itself within 20 s"
+
+if ! echo "$dump" | grep -q "usb_gadget: configured"; then
+	echo "$dump" | tail -n 5
+	fail "adb logcat -d: no line 'usb_gadget: configured'"
+fi
+echo "PASS adb logcat -d ($(echo "$dump" | wc -l) lines)"
+
+follow=$(timeout 5 adb -s "$SERIAL" logcat 2>&1)
+lines=$(echo "$follow" | wc -l)
+[ "$lines" -ge 5 ] || fail "adb logcat: ${lines} lines in 5 s"
+echo "PASS adb logcat (${lines} lines in 5 s)"
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"; adb kill-server > /dev/null 2>&1' EXIT
+
+head -c $((4*1024*1024)) /dev/urandom > "$tmp/up.bin"
+
+timeout 60 adb -s "$SERIAL" push "$tmp/up.bin" /data/up.bin     || fail "adb push"
+timeout 60 adb -s "$SERIAL" pull /data/up.bin  "$tmp/down.bin"  || fail "adb pull"
+cmp "$tmp/up.bin" "$tmp/down.bin" || fail "adb push and pull: the file came back changed"
+echo "PASS adb push and pull (4 MiB)"
+
+echo "PASS all"

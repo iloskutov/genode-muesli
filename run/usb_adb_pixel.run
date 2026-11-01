@@ -1,0 +1,160 @@
+#
+# adb on the Google Pixel 7
+#
+# 'usb_adb' is an adb function of the driver 'exynos_usb_gadget', the PC's
+# unmodified adb sees the phone as a device with the serial number "G-genode".
+# 'log_ring' collects the LOG of the drivers and of 'usb_adb', 'adb logcat' reads it
+# from there. 'adb push' and 'adb pull' see the RAM file system of 'adb_fs'. There is
+# no shell here, 'adb shell' is refused.
+#
+# The test succeeded when the tool 'usb_adb_check' on the PC ends with "PASS all".
+#
+#   make run/usb_adb_pixel KERNEL=hw BOARD=google_pixel7 [UART=yes]
+#
+# To also boot the image on the phone and capture the log, from the Genode
+# directory, and on the PC during the capture:
+#
+#   repos/pixel/tool/device_test usb_adb_pixel 90
+#   repos/muesli/tool/usb_adb_check
+#
+# With the default, the UART shows only what is not routed to 'log_ring', the log of
+# the drivers is in 'adb logcat'. UART=yes writes it to the UART as well.
+#
+# The PC's adb 35 needs its native USB back end, the libusb one does not report this
+# device. Stop a running adb server and set the variable for the new one:
+#
+#   adb kill-server
+#   export ADB_LIBUSB=0
+#   adb logcat
+#
+
+assert {[have_board google_pixel7]}
+
+set uart [expr {[info exists ::env(UART)] ? $::env(UART) : "no"}]
+
+build {
+	core init lib/ld lib/vfs lib/sandbox timer
+	server/log_ring
+	server/vfs
+	driver/platform/gs201
+	driver/pin/gs201
+	driver/i2c/gs201
+	driver/usb_gadget/exynos
+	app/usb_adb
+}
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service IRQ
+  + service IO_MEM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start timer
+  + provides | + service Timer
+  + route | + any-service | + parent
+
++ start log_ring | ram: 2M
+  + provides
+    + service LOG
+    + service Terminal
+  + config | uart: } $uart {
+  + route | + any-service | + parent
+
++ start adb_fs | caps: 200 | ram: 48M
+  + binary vfs
+  + provides | + service File_system
+  + config
+    + vfs
+      + dir data | + ram
+    + default-policy | root: / | writeable: yes
+  + route | + any-service | + parent
+
++ start platform | caps: 150 | ram: 2M | managing_system: yes
+  + binary gs201_platform
+  + provides
+    + service Platform
+    + service Dma
+  + config
+    + policy | label_prefix: gs201_pio | info: yes
+      + device gpio_peric1
+    + policy | label_prefix: gs201_i2c | info: yes
+      + device hsi2c13
+    + policy | label_prefix: exynos_usb_gadget | info: yes
+      + device usb
+      + device usb_phy
+  + route
+    + service LOG   | + child log_ring
+    + service Timer | + child timer
+    + any-service   | + parent
+
++ start gs201_pio | caps: 150 | ram: 2M
+  + provides
+    + service Pin_state
+    + service Pin_control
+    + service IRQ
+  + config
+    + select hsi2c13_scl | bank: gpp25 | index: 0 | function: 2
+    + select hsi2c13_sda | bank: gpp25 | index: 1 | function: 2
+  + route
+    + service LOG      | + child log_ring
+    + service Platform | + child platform
+    + any-service      | + parent
+
++ start gs201_i2c | ram: 2M
+  + provides | + service I2c
+  + config | bus_speed_hz: 400000
+    + allow  | bus_address: 0x25
+      . the Type-C controller of the MAX77759
+    + policy | label_prefix: exynos_usb_gadget | bus_address: 0x25 | max_write: 2
+  + route
+    + service LOG      | + child log_ring
+    + service Platform | + child platform
+    + service Timer    | + child timer
+    + any-service      | + parent
+
++ start exynos_usb_gadget | caps: 300 | ram: 32M
+  + provides | + service Usb_gadget
+  + config | vendor_id:    0x18d1
+           | product_id:   0x4ee7
+           | manufacturer: Genode
+           | product:      Pixel 7
+           | serial:       G-genode
+           | max_power_ma: 100
+    + function | label: adb
+  + route
+    + service LOG | + child log_ring
+    + service ROM | label: dtb | + parent | label: exynos_usb_gadget-google_pixel7.dtb
+    + service Platform | + child platform
+    + service Dma      | + child platform
+    + service I2c      | + child gs201_i2c
+    + service Timer    | + child timer
+    + any-service      | + parent
+
++ start usb_adb | caps: 300 | ram: 64M
+  + config | name: panther | model: Pixel 7 | device: panther
+    + vfs | + fs
+  + route
+    + service LOG         | + child log_ring
+    + service Terminal    | + child log_ring
+    + service File_system | + child adb_fs
+    + service Usb_gadget  | + child exynos_usb_gadget
+    + service Timer       | + child timer
+    + any-service         | + parent
+-
+}
+
+copy_file [file join [repository_contains board/google_pixel7/devices] \
+                     board google_pixel7 devices] [run_dir]/genode/devices
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
