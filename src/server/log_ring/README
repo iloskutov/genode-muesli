@@ -1,0 +1,24 @@
+LOG server that keeps the recent log for readers
+
+The component 'log_ring' serves LOG sessions and keeps their lines, prefixed with the
+client's label, in a ring of the recent log. Readers get read-only Terminal
+sessions: a reader gets the ring from its oldest byte on, then new lines as they
+come. 'adb logcat' of 'usb_adb' is such a reader. Route the LOG session of a component
+to 'log_ring' to have its output there.
+
+Config, with the defaults:
+
+! config | uart: no | size: 256K
+
+:uart: also write each line to the component's own LOG, which reaches the UART.
+:size: size of the ring, at least 4K. It comes from the component's RAM quota.
+
+A line in the ring costs a copy. A line on the UART makes the client wait until it
+is written, about 9 ms for 100 bytes at 115200 baud, and meanwhile blocks all other
+clients. Enable 'uart' when the system may hang or reset, the ring is lost then.
+
+The history has a host test:
+
+! make -C repos/muesli/src/server/log_ring/test
+
+The scenario 'run/log_ring_pixel' tests the component with a reader.

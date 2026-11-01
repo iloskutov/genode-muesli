@@ -1,0 +1,54 @@
+#
+# Log history of 'log_ring' on the Google Pixel 7
+#
+# The LOG session of 'test-log' goes to 'log_ring', 'test-log_ring' reads the
+# history through the Terminal session.
+#
+# The test succeeded when 'test-log_ring' logs "test-log_ring: PASS". With the
+# default, the lines of 'test-log' do not appear on the UART, with UART=yes they
+# do, prefixed with "[init -> log_ring] [test-log]".
+#
+#   make run/log_ring_pixel KERNEL=hw BOARD=google_pixel7 [UART=yes]
+#
+
+assert {[have_board google_pixel7]}
+
+set uart [expr {[info exists ::env(UART)] ? $::env(UART) : "no"}]
+
+build { core init lib/ld server/log_ring test/log test/log_ring }
+
+create_boot_directory
+
+install_config {
+config
++ parent-provides
+  + service ROM
+  + service PD
+  + service RM
+  + service CPU
+  + service LOG
+
++ default | caps: 100 | ram: 1M
+
++ start log_ring | ram: 2M
+  + provides
+    + service LOG
+    + service Terminal
+  + config | uart: } $uart { | size: 1M
+  + route | + any-service | + parent
+
++ start test-log
+  + route
+    + service LOG | + child log_ring
+    + any-service | + parent
+
++ start test-log_ring
+  + route
+    + service Terminal | + child log_ring
+    + any-service      | + parent
+-
+}
+
+build_boot_image [build_artifacts]
+
+run_genode_until forever
