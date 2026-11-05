@@ -303,8 +303,7 @@ class Adb::Shells : Genode::Sandbox::State_handler,
 				g.node("config", [&] {
 					_template.with_optional_sub_node("config", [&] (Node const &config) {
 						g.node_attributes(config);
-						if (!g.append_node_content(config, { 16 }))
-							Genode::warning("shell config too deeply nested"); });
+						g.append_node_content(config); });
 
 					arg("bash", 4);
 					if (sh.command_len) {
@@ -324,8 +323,7 @@ class Adb::Shells : Genode::Sandbox::State_handler,
 						g.attribute("name", "Terminal");
 						g.node("local"); });
 					_template.with_optional_sub_node("route", [&] (Node const &route) {
-						if (!g.append_node_content(route, { 8 }))
-							Genode::warning("shell route too deeply nested"); });
+						g.append_node_content(route); });
 				});
 			});
 		}
